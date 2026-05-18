@@ -114,4 +114,4 @@ client.on("interactionCreate", async interaction => {
 // ---------------------------
 // LOGIN
 // ---------------------------
-client.login("O_TEU_TOKEN_AQUI");
+client.login(process.env.TOKEN);
