@@ -62,7 +62,7 @@ async function getUserId(username) {
 }
 
 async function getAvatar(userId) {
-    return `https://www.roblox.com/headshot-thumbnail/image?userId=${userId}&width=420&height=420&format=png`;
+    return `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`;
 }
 
 // ---------------------------
