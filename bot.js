@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
 const fs = require("fs");
@@ -72,10 +72,41 @@ client.once("ready", () => {
 });
 
 // ---------------------------
+// REGISTAR COMANDO /checkonline
+// ---------------------------
+const commands = [
+    new SlashCommandBuilder()
+        .setName('checkonline')
+        .setDescription('Verifica se o bot está online!')
+].map(cmd => cmd.toJSON());
+
+const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+
+client.once("ready", async () => {
+    console.log(`Bot ligado como ${client.user.tag}`);
+
+    try {
+        await rest.put(
+            Routes.applicationCommands("1505911919645691974"),
+            { body: commands }
+        );
+        console.log("Comando /checkonline registado!");
+    } catch (error) {
+        console.error(error);
+    }
+});
+
+
+// ---------------------------
 // COMANDO /dono
 // ---------------------------
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === "checkonline") {
+    return interaction.reply("I'm online!");
+        }
+
 
     if (interaction.commandName === "dono") {
         const donator = interaction.options.getString("donator");
