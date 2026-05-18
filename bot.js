@@ -1,4 +1,11 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require("discord.js");
+const { 
+    Client, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder 
+} = require("discord.js");
+
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
 const fs = require("fs");
@@ -8,7 +15,6 @@ const fs = require("fs");
 // ---------------------------
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
-
 
 // Lista de doações guardadas
 let donations = [];
@@ -25,7 +31,6 @@ function saveDonations() {
 
 // Quando o site se liga ao WebSocket
 wss.on("connection", (ws) => {
-    // Enviar TODAS as doações guardadas
     ws.send(JSON.stringify({
         type: "all",
         donations
@@ -67,17 +72,29 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-client.once("ready", () => {
-    console.log(`Bot ligado como ${client.user.tag}`);
-});
-
 // ---------------------------
-// REGISTAR COMANDO /checkonline
+// REGISTAR COMANDOS SLASH
 // ---------------------------
 const commands = [
     new SlashCommandBuilder()
         .setName('checkonline')
-        .setDescription('Verifica se o bot está online!')
+        .setDescription('Verifica se o bot está online!'),
+
+    new SlashCommandBuilder()
+        .setName('dono')
+        .setDescription('Regista uma doação')
+        .addStringOption(option =>
+            option.setName('donator')
+                .setDescription('Nome do doador')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('receiver')
+                .setDescription('Nome do recebedor')
+                .setRequired(true))
+        .addIntegerOption(option =>
+            option.setName('amount')
+                .setDescription('Valor da doação')
+                .setRequired(true))
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -87,27 +104,27 @@ client.once("ready", async () => {
 
     try {
         await rest.put(
-            Routes.applicationCommands("1505911919645691974"),
+            Routes.applicationGuildCommands("1505911919645691974", "1327452211743293510"),
             { body: commands }
         );
-        console.log("Comando /checkonline registado!");
+        console.log("Comandos /checkonline e /dono registados!");
     } catch (error) {
         console.error(error);
     }
 });
 
-
 // ---------------------------
-// COMANDO /dono
+// COMANDOS
 // ---------------------------
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    // /checkonline
     if (interaction.commandName === "checkonline") {
-    return interaction.reply("I'm online!");
-        }
+        return interaction.reply("I'm online!");
+    }
 
-
+    // /dono
     if (interaction.commandName === "dono") {
         const donator = interaction.options.getString("donator");
         const receiver = interaction.options.getString("receiver");
@@ -115,14 +132,12 @@ client.on("interactionCreate", async interaction => {
 
         await interaction.reply(`Doação registada: **${donator} → ${receiver} (${amount})**`);
 
-        // Buscar info do Roblox
         const donatorId = await getUserId(donator);
         const receiverId = await getUserId(receiver);
 
         const donatorAvatar = await getAvatar(donatorId);
         const receiverAvatar = await getAvatar(receiverId);
 
-        // Criar objeto da doação
         const donation = {
             donator,
             receiver,
@@ -131,13 +146,8 @@ client.on("interactionCreate", async interaction => {
             receiverAvatar
         };
 
-        // Guardar no array
         donations.unshift(donation);
-
-        // Guardar no ficheiro
         saveDonations();
-
-        // Enviar para o site
         sendToSite(donation);
     }
 });
