@@ -67,8 +67,6 @@ async function getAvatar(userId) {
     );
 
     const data = await res.json();
-
-    // devolve o link HTTPS direto da imagem
     return data.data[0].imageUrl;
 }
 
@@ -102,6 +100,14 @@ const commands = [
         .addIntegerOption(option =>
             option.setName('amount')
                 .setDescription('Valor da doação')
+                .setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('deletedono')
+        .setDescription('Apaga uma doação pelo ID da mensagem')
+        .addStringOption(option =>
+            option.setName('id')
+                .setDescription('ID da mensagem do bot')
                 .setRequired(true))
 ].map(cmd => cmd.toJSON());
 
@@ -115,7 +121,7 @@ client.once("ready", async () => {
             Routes.applicationGuildCommands("1505911919645691974", "1327452211743293510"),
             { body: commands }
         );
-        console.log("Comandos /checkonline e /dono registados!");
+        console.log("Comandos registados!");
     } catch (error) {
         console.error(error);
     }
@@ -138,7 +144,11 @@ client.on("interactionCreate", async interaction => {
         const receiver = interaction.options.getString("receiver");
         const amount = interaction.options.getInteger("amount");
 
-        await interaction.reply(`Doação registada: **${donator} → ${receiver} (${amount})**`);
+        // enviar mensagem e guardar ID
+        const sent = await interaction.reply({
+            content: `Doação registada: **${donator} → ${receiver} (${amount})**`,
+            fetchReply: true
+        });
 
         const donatorId = await getUserId(donator);
         const receiverId = await getUserId(receiver);
@@ -151,12 +161,44 @@ client.on("interactionCreate", async interaction => {
             receiver,
             amount,
             donatorAvatar,
-            receiverAvatar
+            receiverAvatar,
+            messageId: sent.id
         };
 
         donations.unshift(donation);
         saveDonations();
         sendToSite(donation);
+    }
+
+    // /deletedono
+    if (interaction.commandName === "deletedono") {
+        const messageId = interaction.options.getString("id");
+
+        try {
+            const channel = interaction.channel;
+            const msg = await channel.messages.fetch(messageId);
+            await msg.delete();
+
+            donations = donations.filter(d => d.messageId !== messageId);
+            saveDonations();
+
+            sendToSite({
+                type: "all",
+                donations
+            });
+
+            return interaction.reply({
+                content: `🗑️ Doação apagada com sucesso! (ID: ${messageId})`,
+                ephemeral: true
+            });
+
+        } catch (err) {
+            console.log(err);
+            return interaction.reply({
+                content: "❌ Não encontrei essa mensagem ou não consegui apagar.",
+                ephemeral: true
+            });
+        }
     }
 });
 
