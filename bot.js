@@ -62,8 +62,16 @@ async function getUserId(username) {
 }
 
 async function getAvatar(userId) {
-    return `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`;
+    const res = await fetch(
+        `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`
+    );
+
+    const data = await res.json();
+
+    // devolve o link HTTPS direto da imagem
+    return data.data[0].imageUrl;
 }
+
 
 // ---------------------------
 // DISCORD BOT
