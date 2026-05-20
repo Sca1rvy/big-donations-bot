@@ -147,31 +147,52 @@ client.on("interactionCreate", async interaction => {
     // BOTÕES DO /deleteall
     if (interaction.isButton()) {
 
-        if (interaction.customId === "confirm_deleteall") {
+    if (interaction.customId === "confirm_deleteall") {
 
-            donations = [];
-            saveDonations();
+        // 1) APAGAR TODAS AS DOAÇÕES DO FICHEIRO
+        donations = [];
+        saveDonations();
 
-            sendToSite({
-                type: "all",
-                donations
-            });
+        // 2) APAGAR TODAS AS MENSAGENS "Doação registada" DO CANAL
+        const channel = interaction.channel;
 
-            return interaction.update({
-                content: "🗑️ Todas as doações foram apagadas com sucesso!",
-                components: []
-            });
+        let lastId;
+        while (true) {
+            const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
+            if (fetched.size === 0) break;
+
+            lastId = fetched.last().id;
+
+            for (const msg of fetched.values()) {
+                if (msg.content.startsWith("Doação registada")) {
+                    try { await msg.delete(); } catch (err) {}
+                }
+            }
         }
 
-        if (interaction.customId === "cancel_deleteall") {
-            return interaction.update({
-                content: "❌ Ação cancelada.",
-                components: []
-            });
-        }
+        // 3) ATUALIZAR SITE
+        sendToSite({
+            type: "all",
+            donations
+        });
 
-        return;
+        // 4) RESPOSTA
+        return interaction.update({
+            content: "🗑️ Todas as doações e mensagens foram apagadas com sucesso!",
+            components: []
+        });
     }
+
+    if (interaction.customId === "cancel_deleteall") {
+        return interaction.update({
+            content: "❌ Ação cancelada.",
+            components: []
+        });
+    }
+
+    return;
+}
+
 
     if (!interaction.isChatInputCommand()) return;
 
