@@ -116,11 +116,24 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName("deleteall")
-        .setDescription("Apaga TODAS as doações (confirmação necessária)"),
+        .setDescription("APAGA TUDO: Discord + Website + Ficheiro + Histórico"),
 
     new SlashCommandBuilder()
         .setName("exportdonos")
-        .setDescription("Exporta todas as doações do canal para comandos ?dono")
+        .setDescription("Exporta todas as doações do canal para comandos ?dono"),
+
+    new SlashCommandBuilder()
+        .setName("backupdonations")
+        .setDescription("Faz backup do ficheiro donations.json"),
+
+    new SlashCommandBuilder()
+        .setName("restoredonations")
+        .setDescription("Restaura o histórico de doações a partir de um ficheiro")
+        .addAttachmentOption(option =>
+            option.setName("ficheiro")
+                .setDescription("O ficheiro donations.json para restaurar")
+                .setRequired(true)
+        )
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -130,7 +143,7 @@ client.once("ready", async () => {
 
     try {
         await rest.put(
-            Routes.applicationGuildCommands("1505911919645691974", "1327452211743293510"),
+            Routes.applicationGuildCommands("1506739143517016154", "1327452211743293510"),
             { body: commands }
         );
         console.log("Comandos registados!");
@@ -147,52 +160,50 @@ client.on("interactionCreate", async interaction => {
     // BOTÕES DO /deleteall
     if (interaction.isButton()) {
 
-    if (interaction.customId === "confirm_deleteall") {
+        if (interaction.customId === "confirm_deleteall") {
 
-        // 1) APAGAR TODAS AS DOAÇÕES DO FICHEIRO
-        donations = [];
-        saveDonations();
+            // 1) APAGAR TODAS AS MENSAGENS DO CANAL
+            const channel = interaction.channel;
 
-        // 2) APAGAR TODAS AS MENSAGENS "Doação registada" DO CANAL
-        const channel = interaction.channel;
+            let lastId;
+            while (true) {
+                const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
+                if (fetched.size === 0) break;
 
-        let lastId;
-        while (true) {
-            const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
-            if (fetched.size === 0) break;
+                lastId = fetched.last().id;
 
-            lastId = fetched.last().id;
-
-            for (const msg of fetched.values()) {
-                if (msg.content.startsWith("Doação registada")) {
-                    try { await msg.delete(); } catch (err) {}
+                for (const msg of fetched.values()) {
+                    if (msg.content.startsWith("Doação registada")) {
+                        try { await msg.delete(); } catch (err) {}
+                    }
                 }
             }
+
+            // 2) APAGAR HISTÓRICO DO WEBSITE
+            donations = [];
+            saveDonations();
+
+            // 3) ENVIAR LISTA VAZIA PARA O SITE
+            sendToSite({
+                type: "all",
+                donations: []
+            });
+
+            return interaction.update({
+                content: "🗑️ Todas as doações foram apagadas do Discord, ficheiro e website!",
+                components: []
+            });
         }
 
-        // 3) ATUALIZAR SITE
-        sendToSite({
-            type: "all",
-            donations
-        });
+        if (interaction.customId === "cancel_deleteall") {
+            return interaction.update({
+                content: "❌ Ação cancelada.",
+                components: []
+            });
+        }
 
-        // 4) RESPOSTA
-        return interaction.update({
-            content: "🗑️ Todas as doações e mensagens foram apagadas com sucesso!",
-            components: []
-        });
+        return;
     }
-
-    if (interaction.customId === "cancel_deleteall") {
-        return interaction.update({
-            content: "❌ Ação cancelada.",
-            components: []
-        });
-    }
-
-    return;
-}
-
 
     if (!interaction.isChatInputCommand()) return;
 
@@ -230,7 +241,12 @@ client.on("interactionCreate", async interaction => {
 
         donations.unshift(donation);
         saveDonations();
-        sendToSite(donation);
+
+        // ⭐ AGORA O SITE ATUALIZA SEMPRE
+        sendToSite({
+            type: "all",
+            donations
+        });
     }
 
     // /deletedono
@@ -264,7 +280,7 @@ client.on("interactionCreate", async interaction => {
         }
     }
 
-    // /deleteall (SEM PERMISSÕES)
+    // /deleteall
     if (interaction.commandName === "deleteall") {
 
         const row = new ActionRowBuilder().addComponents(
@@ -279,13 +295,13 @@ client.on("interactionCreate", async interaction => {
         );
 
         return interaction.reply({
-            content: "⚠️ Tens a certeza que queres **apagar TODAS as doações**?",
+            content: "⚠️ Tens a certeza que queres **APAGAR TUDO** (Discord + Website + Ficheiro)?",
             components: [row],
             ephemeral: true
         });
     }
 
-    // /exportdonos (CORRIGIDO)
+    // /exportdonos
     if (interaction.commandName === "exportdonos") {
 
         await interaction.reply({ content: "📥 A ler mensagens do canal...", ephemeral: true });
@@ -294,7 +310,6 @@ client.on("interactionCreate", async interaction => {
         let messages = [];
         let lastId;
 
-        // buscar TODAS as mensagens do canal
         while (true) {
             const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
             if (fetched.size === 0) break;
@@ -303,7 +318,6 @@ client.on("interactionCreate", async interaction => {
             lastId = fetched.last().id;
         }
 
-        // ⭐ ORDENAR POR DATA (primeiras doações primeiro)
         messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
         let comandos = [];
@@ -333,10 +347,67 @@ client.on("interactionCreate", async interaction => {
         fs.writeFileSync("exported_donos.txt", fileContent);
 
         return interaction.followUp({
-            content: `✅ Foram encontrados **${comandos.length}** comandos.`,
+            content: `✅ Foram exportadas **${comandos.length}** doações.`,
             files: ["exported_donos.txt"],
             ephemeral: true
         });
+    }
+
+    // /backupdonations
+    if (interaction.commandName === "backupdonations") {
+
+        if (!fs.existsSync("donations.json")) {
+            return interaction.reply({
+                content: "❌ Não existe nenhum ficheiro donations.json para fazer backup.",
+                ephemeral: true
+            });
+        }
+
+        return interaction.reply({
+            content: "📦 Aqui está o backup do histórico de doações.",
+            files: ["donations.json"],
+            ephemeral: true
+        });
+    }
+
+    // /restoredonations
+    if (interaction.commandName === "restoredonations") {
+
+        const file = interaction.options.getAttachment("ficheiro");
+
+        if (!file.name.endsWith(".json")) {
+            return interaction.reply({
+                content: "❌ O ficheiro tem de ser um .json válido.",
+                ephemeral: true
+            });
+        }
+
+        await interaction.reply({ content: "📥 A restaurar histórico...", ephemeral: true });
+
+        try {
+            const response = await fetch(file.url);
+            const data = await response.json();
+
+            donations = data;
+            saveDonations();
+
+            sendToSite({
+                type: "all",
+                donations
+            });
+
+            return interaction.followUp({
+                content: "✅ Histórico restaurado com sucesso!",
+                ephemeral: true
+            });
+
+        } catch (err) {
+            console.log(err);
+            return interaction.followUp({
+                content: "❌ Erro ao restaurar o ficheiro. Verifica se é um JSON válido.",
+                ephemeral: true
+            });
+        }
     }
 });
 
