@@ -59,7 +59,7 @@ function rebuildTotals() {
     totals = {};
 
     for (const d of donations) {
-        if (d.receiver.toLowerCase() !== "sca1rvy") continue;
+        if (!d.receiver || d.receiver.toLowerCase() !== "sca1rvy") continue;
 
         if (!totals[d.donator]) {
             totals[d.donator] = {
@@ -173,23 +173,31 @@ const commands = [
     new SlashCommandBuilder()
         .setName('deletedono')
         .setDescription('Apaga uma doação pelo ID da mensagem')
-        .addStringOption(o => o.setName('id').setDescription('ID da mensagem').setRequired(true))
+        .addStringOption(o => o.setName('id').setDescription('ID da mensagem').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('rebuilddonos')
+        .setDescription('Reconstrói todas as doações a partir do canal')
 ].map(c => c.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 // --------------
-// REBUILD FROM CHANNEL (COM AVATARS ATUALIZADOS)
+// REBUILD FROM CHANNEL
 // --------------
 async function rebuildFromChannel() {
     try {
         const channel = await client.channels.fetch(DONATIONS_CHANNEL_ID);
-        if (!channel) return console.log("❌ Canal inválido.");
+        if (!channel) {
+            console.log("❌ Canal de doações inválido.");
+            return 0;
+        }
 
         console.log("📥 A reconstruir doações a partir do canal...");
 
         let lastId = null;
         const newDonations = [];
+        let count = 0;
 
         while (true) {
             const options = { limit: 100 };
@@ -220,6 +228,8 @@ async function rebuildFromChannel() {
                     receiverAvatar: null,
                     messageId: msg.id
                 });
+
+                count++;
             }
 
             lastId = messages.last().id;
@@ -229,11 +239,14 @@ async function rebuildFromChannel() {
         saveDonations();
         rebuildTotals();
         broadcastTopDonators();
+        sendToSite({ type: "all", donations });
 
-        console.log(`✅ Reconstrução concluída (${donations.length} doações).`);
+        console.log(`✅ Reconstrução concluída (${count} doações).`);
+        return count;
 
     } catch (err) {
-        console.log("❌ Erro ao reconstruir:", err);
+        console.log("❌ Erro ao reconstruir doações a partir do canal:", err);
+        return 0;
     }
 }
 
@@ -317,6 +330,18 @@ client.on("interactionCreate", async interaction => {
         } catch {
             return interaction.reply({ content: "❌ Não encontrei essa mensagem.", ephemeral: true });
         }
+    }
+
+    if (interaction.commandName === "rebuilddonos") {
+        await interaction.reply({ content: "🔄 A reconstruir doações a partir do canal...", ephemeral: true });
+
+        const count = await rebuildFromChannel();
+
+        return interaction.editReply(
+            count > 0
+                ? `✅ Reconstrução concluída com **${count}** doações.`
+                : "⚠️ Não encontrei doações para reconstruir."
+        );
     }
 });
 
