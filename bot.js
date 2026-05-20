@@ -12,6 +12,7 @@ const {
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
 const fs = require("fs");
+const http = require("http");
 
 // --------------
 // CONFIG
@@ -185,7 +186,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 // --------------
 // SEND DONATION (CORRIGIDO)
 // --------------
-async function sendDonation(ws, donator, receiver, amount, messageId) {
+async function sendDonation(donator, receiver, amount, messageId) {
     const donatorId = await getUserId(donator);
     const receiverId = await getUserId(receiver);
 
@@ -324,7 +325,7 @@ client.on("interactionCreate", async interaction => {
             fetchReply: true
         });
 
-        await sendDonation(null, donator, receiver, amount, sent.id);
+        await sendDonation(donator, receiver, amount, sent.id);
     }
 
     if (interaction.commandName === "deletedono") {
@@ -362,14 +363,15 @@ client.on("interactionCreate", async interaction => {
     }
 });
 
-
-// Mantém o Render a ver o serviço como ativo
-const http = require("http");
+// --------------
+// HTTP SERVER (para não chocar com o WebSocket)
+// --------------
 const server = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("Bot is running!");
 });
-server.listen(PORT, () => console.log(`🌐 HTTP server ativo na porta ${PORT}`));
+
+server.listen(3000, () => console.log("🌐 HTTP server ativo na porta 3000"));
 
 // --------------
 // LOGIN
