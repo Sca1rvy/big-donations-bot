@@ -183,7 +183,41 @@ const commands = [
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 // --------------
-// REBUILD FROM CHANNEL
+// SEND DONATION (CORRIGIDO)
+// --------------
+async function sendDonation(ws, donator, receiver, amount, messageId) {
+    const donatorId = await getUserId(donator);
+    const receiverId = await getUserId(receiver);
+
+    const donatorAvatar = await getAvatar(donatorId);
+    const receiverAvatar = await getAvatar(receiverId);
+
+    const donation = {
+        type: "single",
+        donator,
+        receiver,
+        amount,
+        donatorAvatar,
+        receiverAvatar,
+        timestamp: Date.now(),
+        messageId
+    };
+
+    donations.unshift(donation);
+    saveDonations();
+
+    sendToSite(donation);
+
+    if (receiver.toLowerCase() === "sca1rvy") {
+        if (!totals[donator]) totals[donator] = { total: 0, avatar: donatorAvatar };
+        totals[donator].total += amount;
+        totals[donator].avatar = donatorAvatar;
+        broadcastTopDonators();
+    }
+}
+
+// --------------
+// REBUILD FROM CHANNEL (CORRIGIDO)
 // --------------
 async function rebuildFromChannel() {
     try {
@@ -218,14 +252,18 @@ async function rebuildFromChannel() {
                 const amount = parseInt(match[3]);
 
                 const donatorId = await getUserId(donator);
+                const receiverId = await getUserId(receiver);
+
                 const donatorAvatar = await getAvatar(donatorId);
+                const receiverAvatar = await getAvatar(receiverId);
 
                 newDonations.push({
                     donator,
                     receiver,
                     amount,
                     donatorAvatar,
-                    receiverAvatar: null,
+                    receiverAvatar,
+                    timestamp: Date.now(),
                     messageId: msg.id
                 });
 
@@ -286,28 +324,7 @@ client.on("interactionCreate", async interaction => {
             fetchReply: true
         });
 
-        const donatorId = await getUserId(donator);
-        const donatorAvatar = await getAvatar(donatorId);
-
-        const donation = {
-            donator,
-            receiver,
-            amount,
-            donatorAvatar,
-            receiverAvatar: null,
-            messageId: sent.id
-        };
-
-        donations.unshift(donation);
-        saveDonations();
-        sendToSite(donation);
-
-        if (receiver.toLowerCase() === "sca1rvy") {
-            if (!totals[donator]) totals[donator] = { total: 0, avatar: donatorAvatar };
-            totals[donator].total += amount;
-            totals[donator].avatar = donatorAvatar;
-            broadcastTopDonators();
-        }
+        await sendDonation(null, donator, receiver, amount, sent.id);
     }
 
     if (interaction.commandName === "deletedono") {
