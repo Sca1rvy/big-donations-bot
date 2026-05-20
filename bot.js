@@ -220,6 +220,10 @@ async function sendDonation(donator, receiver, amount, messageId) {
 // --------------
 // REBUILD FROM CHANNEL (CORRIGIDO)
 // --------------
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function rebuildFromChannel() {
     try {
         const channel = await client.channels.fetch(DONATIONS_CHANNEL_ID);
@@ -252,11 +256,16 @@ async function rebuildFromChannel() {
                 const receiver = match[2];
                 const amount = parseInt(match[3]);
 
+                // Delay para evitar bloqueio da API
+                await wait(150);
+
                 const donatorId = await getUserId(donator);
                 const receiverId = await getUserId(receiver);
 
                 const donatorAvatar = await getAvatar(donatorId);
                 const receiverAvatar = await getAvatar(receiverId);
+
+                const timestamp = msg.createdTimestamp;
 
                 newDonations.push({
                     donator,
@@ -264,7 +273,7 @@ async function rebuildFromChannel() {
                     amount,
                     donatorAvatar,
                     receiverAvatar,
-                    timestamp: Date.now(),
+                    timestamp,
                     messageId: msg.id
                 });
 
@@ -274,7 +283,10 @@ async function rebuildFromChannel() {
             lastId = messages.last().id;
         }
 
-        donations = newDonations.reverse();
+        // Ordenar por timestamp (oldest → newest)
+        newDonations.sort((a, b) => a.timestamp - b.timestamp);
+
+        donations = newDonations;
         saveDonations();
         rebuildTotals();
         broadcastTopDonators();
@@ -288,6 +300,7 @@ async function rebuildFromChannel() {
         return 0;
     }
 }
+
 
 // --------------
 // READY
