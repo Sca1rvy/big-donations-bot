@@ -1,122 +1,56 @@
-// --------------
-// IMPORTS
-// --------------
-const { 
-    Client, 
-    GatewayIntentBits, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder 
-} = require("discord.js");
+// ================== IMPORTS ==================
 
-const WebSocket = require("ws");
-const fetch = require("node-fetch");
 const fs = require("fs");
-const http = require("http");
+const path = require("path");
+const { Client, GatewayIntentBits, Partials, Collection, REST, Routes } = require("discord.js");
+const WebSocket = require("ws");
+const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 
-// --------------
-// CONFIG
-// --------------
-const DONATIONS_CHANNEL_ID = "1505956583690207402";
+// ================== CONFIG ==================
 
-// --------------
-// WEBSOCKET SERVER
-// --------------
-const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const TOKEN = process.env.TOKEN; // Render.com
+const GUILD_ID = process.env.GUILD_ID;
+const DONATIONS_CHANNEL_ID = process.env.DONATIONS_CHANNEL_ID;
+const WS_PORT = process.env.WS_PORT || 3001;
+
+const DONATIONS_FILE = path.join(__dirname, "donations.json");
+
+// ================== ESTADO ==================
 
 let donations = [];
-let totals = {}; 
+let wsClients = [];
 
-// --------------
-// LOAD donations.json
-// --------------
-try {
-    if (fs.existsSync("donations.json")) {
-        donations = JSON.parse(fs.readFileSync("donations.json", "utf8") || "[]");
-        console.log(`✅ donations.json carregado (${donations.length} doações).`);
-    } else {
-        fs.writeFileSync("donations.json", "[]");
+// ================== FICHEIRO ==================
+
+function loadDonations() {
+    try {
+        if (fs.existsSync(DONATIONS_FILE)) {
+            donations = JSON.parse(fs.readFileSync(DONATIONS_FILE, "utf8"));
+            console.log(`📂 Doações carregadas (${donations.length}).`);
+        } else {
+            donations = [];
+            console.log("📂 Sem ficheiro de doações, a começar vazio.");
+        }
+    } catch (err) {
+        console.log("❌ Erro a carregar donations.json:", err);
         donations = [];
-        console.log("ℹ️ donations.json criado vazio.");
     }
-} catch (err) {
-    console.log("❌ Erro ao carregar donations.json:", err);
-    donations = [];
 }
 
 function saveDonations() {
     try {
-        fs.writeFileSync("donations.json", JSON.stringify(donations, null, 2));
+        fs.writeFileSync(DONATIONS_FILE, JSON.stringify(donations, null, 2), "utf8");
+        console.log("💾 Doações guardadas.");
     } catch (err) {
-        console.log("❌ Erro ao guardar donations.json:", err);
+        console.log("❌ Erro a guardar donations.json:", err);
     }
 }
 
-// --------------
-// REBUILD TOTALS
-// --------------
-function rebuildTotals() {
-    totals = {};
+// ================== ROBLOX HELPERS ==================
 
-    for (const d of donations) {
-        if (!d.receiver || d.receiver.toLowerCase() !== "sca1rvy") continue;
-
-        if (!totals[d.donator]) {
-            totals[d.donator] = {
-                total: 0,
-                avatar: d.donatorAvatar
-            };
-        }
-
-        totals[d.donator].total += d.amount;
-        totals[d.donator].avatar = d.donatorAvatar;
-    }
-
-    console.log(`🔁 Totals reconstruídos (${Object.keys(totals).length} players).`);
-}
-
-function getTopDonatorsArray() {
-    return Object.entries(totals)
-        .sort((a, b) => b[1].total - a[1].total)
-        .slice(0, 10)
-        .map(([username, info], index) => ({
-            rank: index + 1,
-            username,
-            total: info.total,
-            avatar: info.avatar
-        }));
-}
-
-function sendToSite(data) {
-    const json = JSON.stringify(data);
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) client.send(json);
-    });
-}
-
-function broadcastTopDonators() {
-    sendToSite({
-        type: "topDonators",
-        data: getTopDonatorsArray()
-    });
-}
-
-// --------------
-// WEBSOCKET CONNECTION
-// --------------
-wss.on("connection", (ws) => {
-    console.log("🌐 Cliente ligado ao WebSocket.");
-
-    ws.send(JSON.stringify({ type: "all", donations }));
-    ws.send(JSON.stringify({ type: "topDonators", data: getTopDonatorsArray() }));
-});
-
-// --------------
-// ROBLOX API
-// --------------
 async function getUserId(username) {
     try {
+        // API nova
         const res = await fetch("https://users.roblox.com/v1/usernames/users", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -124,7 +58,17 @@ async function getUserId(username) {
         });
 
         const data = await res.json();
-        return data.data?.[0]?.id || null;
+        const id = data?.data?.[0]?.id;
+        if (id) return id;
+
+        // API antiga (fallback)
+        const fallback = await fetch(
+            `https://api.roblox.com/users/get-by-username?username=${encodeURIComponent(username)}`
+        );
+        const oldData = await fallback.json();
+        if (oldData && oldData.Id) return oldData.Id;
+
+        return null;
     } catch {
         return null;
     }
@@ -132,107 +76,64 @@ async function getUserId(username) {
 
 async function getAvatar(userId) {
     if (!userId) return "Template.png";
-
-    try {
-        const res = await fetch(
-            `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`
-        );
-
-        const data = await res.json();
-        return data.data?.[0]?.imageUrl || "Template.png";
-    } catch {
-        return "Template.png";
-    }
+    return `https://www.roblox.com/headshot-thumbnail/image?userId=${userId}&width=420&height=420&format=png`;
 }
 
-// --------------
-// DISCORD BOT
-// --------------
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+// ================== WEBSOCKET PARA O SITE ==================
+
+const wss = new WebSocket.Server({ port: WS_PORT }, () => {
+    console.log(`🌐 WebSocket do site ativo na porta ${WS_PORT}`);
 });
 
-// --------------
-// SLASH COMMANDS
-// --------------
-const commands = [
-    new SlashCommandBuilder()
-        .setName('checkonline')
-        .setDescription('Verifica se o bot está online!'),
+wss.on("connection", (ws) => {
+    console.log("🔌 Site ligado.");
+    wsClients.push(ws);
 
-    new SlashCommandBuilder()
-        .setName('dono')
-        .setDescription('Regista uma doação')
-        .addStringOption(o => o.setName('donator').setDescription('Nome do doador').setRequired(true))
-        .addStringOption(o => o.setName('receiver').setDescription('Nome do recebedor').setRequired(true))
-        .addIntegerOption(o => o.setName('amount').setDescription('Valor da doação').setRequired(true)),
+    ws.send(JSON.stringify({ type: "all", donations }));
 
-    new SlashCommandBuilder()
-        .setName('deletedono')
-        .setDescription('Apaga uma doação pelo ID da mensagem')
-        .addStringOption(o => o.setName('id').setDescription('ID da mensagem').setRequired(true)),
+    ws.on("close", () => {
+        wsClients = wsClients.filter(c => c !== ws);
+        console.log("🔌 Site desligado.");
+    });
+});
 
-    new SlashCommandBuilder()
-        .setName('rebuilddonos')
-        .setDescription('Reconstrói todas as doações a partir do canal')
-].map(c => c.toJSON());
-
-const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-
-// --------------
-// SEND DONATION (CORRIGIDO)
-// --------------
-async function sendDonation(donator, receiver, amount, messageId) {
-    const donatorId = await getUserId(donator);
-    const receiverId = await getUserId(receiver);
-
-    const donatorAvatar = await getAvatar(donatorId);
-    const receiverAvatar = await getAvatar(receiverId);
-
-    const donation = {
-        type: "single",
-        donator,
-        receiver,
-        amount,
-        donatorAvatar,
-        receiverAvatar,
-        timestamp: Date.now(),
-        messageId
-    };
-
-    donations.unshift(donation);
-    saveDonations();
-
-    sendToSite(donation);
-
-    if (receiver.toLowerCase() === "sca1rvy") {
-        if (!totals[donator]) totals[donator] = { total: 0, avatar: donatorAvatar };
-        totals[donator].total += amount;
-        totals[donator].avatar = donatorAvatar;
-        broadcastTopDonators();
-    }
+function sendToSite(payload) {
+    const data = JSON.stringify(payload);
+    wsClients.forEach(ws => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
 }
 
-// --------------
-// REBUILD FROM CHANNEL (CORRIGIDO)
-// --------------
+// ================== TOP DONATORS ==================
+
+function broadcastTopDonators() {
+    const totals = new Map();
+
+    for (const d of donations) {
+        const key = d.donator.toLowerCase();
+        totals.set(key, (totals.get(key) || 0) + d.amount);
+    }
+
+    const top = [...totals.entries()]
+        .map(([name, total]) => ({ name, total }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 10);
+
+    sendToSite({ type: "topDonators", data: top });
+}
+
+// ================== REBUILD ==================
+
 function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function rebuildFromChannel() {
+async function rebuildFromChannel(client) {
     try {
         const channel = await client.channels.fetch(DONATIONS_CHANNEL_ID);
-        if (!channel) {
-            console.log("❌ Canal de doações inválido.");
-            return 0;
-        }
+        if (!channel) return 0;
 
-        console.log("📥 A reconstruir doações a partir do canal...");
+        console.log("📥 A reconstruir doações...");
 
         let lastId = null;
         const newDonations = [];
@@ -256,7 +157,6 @@ async function rebuildFromChannel() {
                 const receiver = match[2];
                 const amount = parseInt(match[3]);
 
-                // Delay para evitar bloqueio da API
                 await wait(150);
 
                 const donatorId = await getUserId(donator);
@@ -265,15 +165,13 @@ async function rebuildFromChannel() {
                 const donatorAvatar = await getAvatar(donatorId);
                 const receiverAvatar = await getAvatar(receiverId);
 
-                const timestamp = msg.createdTimestamp;
-
                 newDonations.push({
                     donator,
                     receiver,
                     amount,
                     donatorAvatar,
                     receiverAvatar,
-                    timestamp,
+                    timestamp: msg.createdTimestamp,
                     messageId: msg.id
                 });
 
@@ -283,110 +181,156 @@ async function rebuildFromChannel() {
             lastId = messages.last().id;
         }
 
-        // Ordenar por timestamp (oldest → newest)
+        // oldest → newest
         newDonations.sort((a, b) => a.timestamp - b.timestamp);
 
         donations = newDonations;
         saveDonations();
-        rebuildTotals();
         broadcastTopDonators();
         sendToSite({ type: "all", donations });
 
-        console.log(`✅ Reconstrução concluída (${count} doações).`);
+        console.log(`✅ Rebuild concluído (${count} doações).`);
         return count;
 
     } catch (err) {
-        console.log("❌ Erro ao reconstruir doações a partir do canal:", err);
+        console.log("❌ Erro no rebuild:", err);
         return 0;
     }
 }
 
+// ================== DISCORD CLIENT ==================
 
-// --------------
-// READY
-// --------------
-client.once("ready", async () => {
-    console.log(`🤖 Bot ligado como ${client.user.tag}`);
-
-    rebuildTotals();
-    await rebuildFromChannel();
-
-    await rest.put(
-        Routes.applicationGuildCommands("1505911919645691974", "1327452211743293510"),
-        { body: commands }
-    );
-
-    console.log("✅ Comandos registados.");
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ],
+    partials: [Partials.Channel, Partials.Message]
 });
 
-// --------------
-// COMANDOS
-// --------------
-client.on("interactionCreate", async interaction => {
+// ================== SLASH COMMANDS ==================
+
+const commands = [
+    {
+        name: "dono",
+        description: "Registar uma doação",
+        options: [
+            { name: "donator", type: 3, description: "Quem doou", required: true },
+            { name: "receiver", type: 3, description: "Quem recebeu", required: true },
+            { name: "amount", type: 4, description: "Valor", required: true }
+        ]
+    },
+    {
+        name: "rebuilddonos",
+        description: "Reconstruir doações"
+    },
+    {
+        name: "deletedono",
+        description: "Apagar doação",
+        options: [
+            { name: "id", type: 3, description: "ID da mensagem", required: true }
+        ]
+    }
+];
+
+const rest = new REST({ version: "10" }).setToken(TOKEN);
+
+async function registerCommands() {
+    await rest.put(
+        Routes.applicationGuildCommands(client.user.id, GUILD_ID),
+        { body: commands }
+    );
+    console.log("✅ Slash commands registados.");
+}
+
+// ================== EVENTOS ==================
+
+client.once("ready", async () => {
+    console.log(`🤖 Logado como ${client.user.tag}`);
+    loadDonations();
+    await registerCommands();
+    broadcastTopDonators();
+});
+
+// ================== HANDLER DE COMANDOS ==================
+
+client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === "checkonline")
-        return interaction.reply("I'm online!");
-
+    // ------------------ /dono ------------------
     if (interaction.commandName === "dono") {
         const donator = interaction.options.getString("donator");
         const receiver = interaction.options.getString("receiver");
         const amount = interaction.options.getInteger("amount");
 
-        const sent = await interaction.reply({
-            content: `Doação registada: **${donator} → ${receiver} (${amount})**`,
-            fetchReply: true
-        });
+        const donatorId = await getUserId(donator);
+        const receiverId = await getUserId(receiver);
 
-        await sendDonation(donator, receiver, amount, sent.id);
+        const donatorAvatar = await getAvatar(donatorId);
+        const receiverAvatar = await getAvatar(receiverId);
+
+        const channel = await client.channels.fetch(DONATIONS_CHANNEL_ID);
+
+        const msg = await channel.send(
+            `Doação registada: **${donator} → ${receiver} (${amount})**`
+        );
+
+        const donation = {
+            donator,
+            receiver,
+            amount,
+            donatorAvatar,
+            receiverAvatar,
+            timestamp: Date.now(),
+            messageId: msg.id
+        };
+
+        donations.unshift(donation); // NEWEST FIRST
+        saveDonations();
+        broadcastTopDonators();
+
+        sendToSite({ type: "single", ...donation });
+
+        await interaction.reply({
+            content: `✅ Doação registada.`,
+            ephemeral: true
+        });
     }
 
+    // ------------------ /rebuilddonos ------------------
+    if (interaction.commandName === "rebuilddonos") {
+        await interaction.reply({ content: "🔄 A reconstruir...", ephemeral: true });
+        const count = await rebuildFromChannel(client);
+        await interaction.editReply(`✅ Reconstruído: ${count} doações.`);
+    }
+
+    // ------------------ /deletedono ------------------
     if (interaction.commandName === "deletedono") {
         const messageId = interaction.options.getString("id");
 
         try {
-            const msg = await interaction.channel.messages.fetch(messageId);
+            const channel = await client.channels.fetch(DONATIONS_CHANNEL_ID);
+            const msg = await channel.messages.fetch(messageId);
             await msg.delete();
-
-            donations = donations.filter(d => d.messageId !== messageId);
-            saveDonations();
-
-            sendToSite({ type: "all", donations });
-
-            rebuildTotals();
-            broadcastTopDonators();
-
-            return interaction.reply({ content: `🗑️ Doação apagada!`, ephemeral: true });
-
         } catch {
-            return interaction.reply({ content: "❌ Não encontrei essa mensagem.", ephemeral: true });
+            console.log(`⚠️ Mensagem ${messageId} já não existe.`);
+        }
+
+        const before = donations.length;
+        donations = donations.filter(d => d.messageId !== messageId);
+        saveDonations();
+        broadcastTopDonators();
+        sendToSite({ type: "all", donations });
+
+        if (donations.length < before) {
+            await interaction.reply({ content: "🗑️ Doação apagada.", ephemeral: true });
+        } else {
+            await interaction.reply({ content: "❌ ID não encontrado.", ephemeral: true });
         }
     }
-
-    if (interaction.commandName === "rebuilddonos") {
-        await interaction.reply({ content: "🔄 A reconstruir doações a partir do canal...", ephemeral: true });
-
-        const count = await rebuildFromChannel();
-
-        return interaction.editReply(
-            count > 0
-                ? `✅ Reconstrução concluída com **${count}** doações.`
-                : "⚠️ Não encontrei doações para reconstruir."
-        );
-    }
 });
 
-// --------------
-// HTTP SERVER (para não chocar com o WebSocket)
-// --------------
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Bot is running!");
-});
+// ================== LOGIN ==================
 
-server.listen(3000, () => console.log("🌐 HTTP server ativo na porta 3000"));
-
-// --------------
-// LOGIN
-// --------------
-client.login(process.env.TOKEN);
+client.login(TOKEN);
