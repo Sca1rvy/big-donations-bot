@@ -143,9 +143,12 @@ client.once("ready", async () => {
 // COMANDOS SLASH + BOTÕES
 // ---------------------------
 client.on("interactionCreate", async interaction => {
-    // BOTÕES (deleteall)
+
+    // BOTÕES DO /deleteall
     if (interaction.isButton()) {
+
         if (interaction.customId === "confirm_deleteall") {
+
             donations = [];
             saveDonations();
 
@@ -240,15 +243,8 @@ client.on("interactionCreate", async interaction => {
         }
     }
 
-    // /deleteall
+    // /deleteall (SEM PERMISSÕES)
     if (interaction.commandName === "deleteall") {
-
-        if (interaction.user.username !== "Sca1rvy") {
-            return interaction.reply({
-                content: "❌ Não tens permissão para usar este comando.",
-                ephemeral: true
-            });
-        }
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -268,8 +264,9 @@ client.on("interactionCreate", async interaction => {
         });
     }
 
-    // /exportdonos
+    // /exportdonos (CORRIGIDO)
     if (interaction.commandName === "exportdonos") {
+
         await interaction.reply({ content: "📥 A ler mensagens do canal...", ephemeral: true });
 
         const channel = interaction.channel;
@@ -306,6 +303,9 @@ client.on("interactionCreate", async interaction => {
         if (comandos.length === 0) {
             return interaction.editReply("❌ Não encontrei nenhuma doação no canal.");
         }
+
+        // ⭐ CORREÇÃO: inverter para ordem cronológica correta
+        comandos.reverse();
 
         const fileContent = comandos.join("\n");
         fs.writeFileSync("exported_donos.txt", fileContent);
