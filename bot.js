@@ -1,9 +1,12 @@
-const { 
-    Client, 
-    GatewayIntentBits, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder 
+const {
+    Client,
+    GatewayIntentBits,
+    REST,
+    Routes,
+    SlashCommandBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
 } = require("discord.js");
 
 const WebSocket = require("ws");
@@ -62,6 +65,8 @@ async function getUserId(username) {
 }
 
 async function getAvatar(userId) {
+    if (!userId) return null;
+
     const res = await fetch(
         `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`
     );
@@ -69,7 +74,6 @@ async function getAvatar(userId) {
     const data = await res.json();
     return data.data[0].imageUrl;
 }
-
 
 // ---------------------------
 // DISCORD BOT
@@ -83,35 +87,43 @@ const client = new Client({
 // ---------------------------
 const commands = [
     new SlashCommandBuilder()
-        .setName('checkonline')
-        .setDescription('Verifica se o bot está online!'),
+        .setName("checkonline")
+        .setDescription("Verifica se o bot está online!"),
 
     new SlashCommandBuilder()
-        .setName('dono')
-        .setDescription('Regista uma doação')
+        .setName("dono")
+        .setDescription("Regista uma doação")
         .addStringOption(option =>
-            option.setName('donator')
-                .setDescription('Nome do doador')
+            option.setName("donator")
+                .setDescription("Nome do doador")
                 .setRequired(true))
         .addStringOption(option =>
-            option.setName('receiver')
-                .setDescription('Nome do recebedor')
+            option.setName("receiver")
+                .setDescription("Nome do recebedor")
                 .setRequired(true))
         .addIntegerOption(option =>
-            option.setName('amount')
-                .setDescription('Valor da doação')
+            option.setName("amount")
+                .setDescription("Valor da doação")
                 .setRequired(true)),
 
     new SlashCommandBuilder()
-        .setName('deletedono')
-        .setDescription('Apaga uma doação pelo ID da mensagem')
+        .setName("deletedono")
+        .setDescription("Apaga uma doação pelo ID da mensagem")
         .addStringOption(option =>
-            option.setName('id')
-                .setDescription('ID da mensagem do bot')
-                .setRequired(true))
+            option.setName("id")
+                .setDescription("ID da mensagem do bot")
+                .setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName("deleteall")
+        .setDescription("Apaga TODAS as doações (confirmação necessária)"),
+
+    new SlashCommandBuilder()
+        .setName("exportdonos")
+        .setDescription("Exporta todas as doações do canal para comandos ?dono")
 ].map(cmd => cmd.toJSON());
 
-const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
 client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
@@ -128,9 +140,36 @@ client.once("ready", async () => {
 });
 
 // ---------------------------
-// COMANDOS SLASH
+// COMANDOS SLASH + BOTÕES
 // ---------------------------
 client.on("interactionCreate", async interaction => {
+    // BOTÕES (deleteall)
+    if (interaction.isButton()) {
+        if (interaction.customId === "confirm_deleteall") {
+            donations = [];
+            saveDonations();
+
+            sendToSite({
+                type: "all",
+                donations
+            });
+
+            return interaction.update({
+                content: "🗑️ Todas as doações foram apagadas com sucesso!",
+                components: []
+            });
+        }
+
+        if (interaction.customId === "cancel_deleteall") {
+            return interaction.update({
+                content: "❌ Ação cancelada.",
+                components: []
+            });
+        }
+
+        return;
+    }
+
     if (!interaction.isChatInputCommand()) return;
 
     // /checkonline
@@ -144,7 +183,6 @@ client.on("interactionCreate", async interaction => {
         const receiver = interaction.options.getString("receiver");
         const amount = interaction.options.getInteger("amount");
 
-        // enviar mensagem e guardar ID
         const sent = await interaction.reply({
             content: `Doação registada: **${donator} → ${receiver} (${amount})**`,
             fetchReply: true
@@ -162,7 +200,8 @@ client.on("interactionCreate", async interaction => {
             amount,
             donatorAvatar,
             receiverAvatar,
-            messageId: sent.id
+            messageId: sent.id,
+            timestamp: Date.now()
         };
 
         donations.unshift(donation);
@@ -200,6 +239,83 @@ client.on("interactionCreate", async interaction => {
             });
         }
     }
+
+    // /deleteall
+    if (interaction.commandName === "deleteall") {
+
+        if (interaction.user.username !== "Sca1rvy") {
+            return interaction.reply({
+                content: "❌ Não tens permissão para usar este comando.",
+                ephemeral: true
+            });
+        }
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId("confirm_deleteall")
+                .setLabel("Sim")
+                .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+                .setCustomId("cancel_deleteall")
+                .setLabel("Não")
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        return interaction.reply({
+            content: "⚠️ Tens a certeza que queres **apagar TODAS as doações**?",
+            components: [row],
+            ephemeral: true
+        });
+    }
+
+    // /exportdonos
+    if (interaction.commandName === "exportdonos") {
+        await interaction.reply({ content: "📥 A ler mensagens do canal...", ephemeral: true });
+
+        const channel = interaction.channel;
+        let messages = [];
+        let lastId;
+
+        while (true) {
+            const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
+            if (fetched.size === 0) break;
+
+            messages = messages.concat(Array.from(fetched.values()));
+            lastId = fetched.last().id;
+        }
+
+        let comandos = [];
+
+        for (const msg of messages) {
+            const content = msg.content;
+
+            if (!content.startsWith("Doação registada")) continue;
+
+            const regex = /Doação registada(?: \(emergência\))?: \*\*(.+?) → (.+?) \((\d+)\)\*\*/;
+            const match = content.match(regex);
+
+            if (!match) continue;
+
+            const donator = match[1];
+            const receiver = match[2];
+            const amount = match[3];
+
+            comandos.push(`?dono ${donator} ${receiver} ${amount}`);
+        }
+
+        if (comandos.length === 0) {
+            return interaction.editReply("❌ Não encontrei nenhuma doação no canal.");
+        }
+
+        const fileContent = comandos.join("\n");
+        fs.writeFileSync("exported_donos.txt", fileContent);
+
+        return interaction.followUp({
+            content: `✅ Foram encontrados **${comandos.length}** comandos.`,
+            files: ["exported_donos.txt"],
+            ephemeral: true
+        });
+    }
 });
 
 // ---------------------------
@@ -227,12 +343,10 @@ client.on("messageCreate", async (msg) => {
         const donatorAvatar = await getAvatar(donatorId);
         const receiverAvatar = await getAvatar(receiverId);
 
-        // 🔥 ENVIAR MENSAGEM REAL NO DISCORD
         const sent = await msg.channel.send(
             `Doação registada (emergência): **${donator} → ${receiver} (${amount})**`
         );
 
-        // 🔥 DOAÇÃO COMPLETA (AGORA /deletedono FUNCIONA)
         const donation = {
             donator,
             receiver,
@@ -243,13 +357,11 @@ client.on("messageCreate", async (msg) => {
             timestamp: Date.now()
         };
 
-        // 🔥 PRIMEIRA LINHA = PRIMEIRA DOAÇÃO
         donations.unshift(donation);
     }
 
     saveDonations();
 
-    // 🔥 ATUALIZAR SITE
     sendToSite({
         type: "all",
         donations
@@ -257,7 +369,6 @@ client.on("messageCreate", async (msg) => {
 
     msg.reply("✅ Doações de emergência adicionadas com sucesso!");
 });
-
 
 // ---------------------------
 // LOGIN
