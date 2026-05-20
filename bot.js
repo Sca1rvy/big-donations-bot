@@ -273,6 +273,7 @@ client.on("interactionCreate", async interaction => {
         let messages = [];
         let lastId;
 
+        // buscar TODAS as mensagens do canal
         while (true) {
             const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
             if (fetched.size === 0) break;
@@ -280,6 +281,9 @@ client.on("interactionCreate", async interaction => {
             messages = messages.concat(Array.from(fetched.values()));
             lastId = fetched.last().id;
         }
+
+        // ⭐ ORDENAR POR DATA (primeiras doações primeiro)
+        messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
         let comandos = [];
 
@@ -303,9 +307,6 @@ client.on("interactionCreate", async interaction => {
         if (comandos.length === 0) {
             return interaction.editReply("❌ Não encontrei nenhuma doação no canal.");
         }
-
-        // ⭐ CORREÇÃO: inverter para ordem cronológica correta
-        comandos.reverse();
 
         const fileContent = comandos.join("\n");
         fs.writeFileSync("exported_donos.txt", fileContent);
