@@ -227,21 +227,29 @@ client.on("messageCreate", async (msg) => {
         const donatorAvatar = await getAvatar(donatorId);
         const receiverAvatar = await getAvatar(receiverId);
 
+        // 🔥 ENVIAR MENSAGEM REAL NO DISCORD
+        const sent = await msg.channel.send(
+            `Doação registada (emergência): **${donator} → ${receiver} (${amount})**`
+        );
+
+        // 🔥 DOAÇÃO COMPLETA (AGORA /deletedono FUNCIONA)
         const donation = {
             donator,
             receiver,
             amount,
             donatorAvatar,
             receiverAvatar,
-            messageId: "manual-" + Date.now() + Math.random(),
+            messageId: sent.id,
             timestamp: Date.now()
         };
 
+        // 🔥 PRIMEIRA LINHA = PRIMEIRA DOAÇÃO
         donations.unshift(donation);
     }
 
     saveDonations();
 
+    // 🔥 ATUALIZAR SITE
     sendToSite({
         type: "all",
         donations
@@ -249,6 +257,7 @@ client.on("messageCreate", async (msg) => {
 
     msg.reply("✅ Doações de emergência adicionadas com sucesso!");
 });
+
 
 // ---------------------------
 // LOGIN
