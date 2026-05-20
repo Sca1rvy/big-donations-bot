@@ -75,7 +75,7 @@ async function getAvatar(userId) {
 // DISCORD BOT
 // ---------------------------
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
 // ---------------------------
@@ -128,7 +128,7 @@ client.once("ready", async () => {
 });
 
 // ---------------------------
-// COMANDOS
+// COMANDOS SLASH
 // ---------------------------
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
@@ -200,6 +200,54 @@ client.on("interactionCreate", async interaction => {
             });
         }
     }
+});
+
+// ---------------------------
+// COMANDO DE EMERGÊNCIA ?dono
+// ---------------------------
+client.on("messageCreate", async (msg) => {
+    if (!msg.content.startsWith("?dono")) return;
+
+    const lines = msg.content.split("\n");
+
+    for (const line of lines) {
+        if (!line.startsWith("?dono")) continue;
+
+        const parts = line.trim().split(" ");
+
+        if (parts.length < 4) continue;
+
+        const donator = parts[1];
+        const receiver = parts[2];
+        const amount = parseInt(parts[3]);
+
+        const donatorId = await getUserId(donator);
+        const receiverId = await getUserId(receiver);
+
+        const donatorAvatar = await getAvatar(donatorId);
+        const receiverAvatar = await getAvatar(receiverId);
+
+        const donation = {
+            donator,
+            receiver,
+            amount,
+            donatorAvatar,
+            receiverAvatar,
+            messageId: "manual-" + Date.now() + Math.random(),
+            timestamp: Date.now()
+        };
+
+        donations.unshift(donation);
+    }
+
+    saveDonations();
+
+    sendToSite({
+        type: "all",
+        donations
+    });
+
+    msg.reply("✅ Doações de emergência adicionadas com sucesso!");
 });
 
 // ---------------------------
