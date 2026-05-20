@@ -19,6 +19,10 @@ const wss = new WebSocket.Server({ port: PORT });
 // Lista de doações guardadas
 let donations = [];
 
+// Totais por donator (só RECEIVED para Sca1rvy)
+let totals = {}; 
+// estrutura: { "username": { total: number, avatar: string } }
+
 // Carregar doações guardadas do ficheiro
 if (fs.existsSync("donations.json")) {
     donations = JSON.parse(fs.readFileSync("donations.json"));
@@ -29,15 +33,45 @@ function saveDonations() {
     fs.writeFileSync("donations.json", JSON.stringify(donations, null, 2));
 }
 
-// Quando o site se liga ao WebSocket
-wss.on("connection", (ws) => {
-    ws.send(JSON.stringify({
-        type: "all",
-        donations
-    }));
-});
+// Recalcular os totais a partir de TODAS as doações guardadas
+function rebuildTotals() {
+    totals = {};
 
-// Enviar doação nova para o site
+    for (const d of donations) {
+        // Só conta doações RECEBIDAS por Sca1rvy
+        if (!d.receiver || d.receiver.toLowerCase() !== "sca1rvy") continue;
+
+        const name = d.donator;
+        if (!totals[name]) {
+            totals[name] = {
+                total: 0,
+                avatar: d.donatorAvatar || null
+            };
+        }
+
+        totals[name].total += d.amount;
+
+        // Atualiza avatar para o mais recente, se existir
+        if (d.donatorAvatar) {
+            totals[name].avatar = d.donatorAvatar;
+        }
+    }
+}
+
+// Devolve o array Top 10 já ordenado
+function getTopDonatorsArray() {
+    return Object.entries(totals)
+        .sort((a, b) => b[1].total - a[1].total)
+        .slice(0, 10)
+        .map(([username, info], index) => ({
+            rank: index + 1,
+            username,
+            total: info.total,
+            avatar: info.avatar
+        }));
+}
+
+// Enviar dados para TODOS os clientes ligados
 function sendToSite(data) {
     const json = JSON.stringify(data);
     wss.clients.forEach(client => {
@@ -46,6 +80,31 @@ function sendToSite(data) {
         }
     });
 }
+
+// Enviar o Top 10 atual
+function broadcastTopDonators() {
+    const top = getTopDonatorsArray();
+    sendToSite({
+        type: "topDonators",
+        data: top
+    });
+}
+
+// Quando o site se liga ao WebSocket
+wss.on("connection", (ws) => {
+    // Envia todas as doações (para o site das Highest Donations)
+    ws.send(JSON.stringify({
+        type: "all",
+        donations
+    }));
+
+    // Envia também o Top 10 (para o site dos Top Donators)
+    const top = getTopDonatorsArray();
+    ws.send(JSON.stringify({
+        type: "topDonators",
+        data: top
+    }));
+});
 
 // ---------------------------
 // ROBLOX API
@@ -116,6 +175,9 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
 
+    // Recalcular totais ao iniciar (com base nas doações guardadas)
+    rebuildTotals();
+
     try {
         await rest.put(
             Routes.applicationGuildCommands("1505911919645691974", "1327452211743293510"),
@@ -165,9 +227,32 @@ client.on("interactionCreate", async interaction => {
             messageId: sent.id
         };
 
+        // Guardar no array principal
         donations.unshift(donation);
         saveDonations();
+
+        // Enviar doação nova para o site das Highest Donations
         sendToSite(donation);
+
+        // Se for RECEIVED por Sca1rvy, atualizar Top Donators
+        if (receiver.toLowerCase() === "sca1rvy") {
+            if (!totals[donator]) {
+                totals[donator] = {
+                    total: 0,
+                    avatar: donatorAvatar
+                };
+            }
+
+            totals[donator].total += amount;
+
+            // Atualiza avatar para o mais recente
+            if (donatorAvatar) {
+                totals[donator].avatar = donatorAvatar;
+            }
+
+            // Enviar Top 10 atualizado
+            broadcastTopDonators();
+        }
     }
 
     // /deletedono
@@ -179,13 +264,19 @@ client.on("interactionCreate", async interaction => {
             const msg = await channel.messages.fetch(messageId);
             await msg.delete();
 
+            // Remover do array de doações
             donations = donations.filter(d => d.messageId !== messageId);
             saveDonations();
 
+            // Enviar lista completa atualizada para o site das Highest Donations
             sendToSite({
                 type: "all",
                 donations
             });
+
+            // Recalcular totais e reenviar Top Donators
+            rebuildTotals();
+            broadcastTopDonators();
 
             return interaction.reply({
                 content: `🗑️ Doação apagada com sucesso! (ID: ${messageId})`,
