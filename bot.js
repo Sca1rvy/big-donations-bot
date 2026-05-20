@@ -11,7 +11,11 @@ const {
 
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
-const fs = require("fs");
+
+// ---------------------------
+// CONFIG
+// ---------------------------
+const DONATION_CHANNEL = "1506766663272628385"; // canal das doações
 
 // ---------------------------
 // WEBSOCKET SERVER
@@ -19,60 +23,106 @@ const fs = require("fs");
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-// Lista de doações guardadas
-let donations = [];
-
-// Carregar doações guardadas do ficheiro
-if (fs.existsSync("donations.json")) {
-    donations = JSON.parse(fs.readFileSync("donations.json"));
-}
-
-// Guardar doações no ficheiro
-function saveDonations() {
-    fs.writeFileSync("donations.json", JSON.stringify(donations, null, 2));
-}
-
 // Quando o site se liga ao WebSocket
 wss.on("connection", (ws) => {
-    ws.send(JSON.stringify({
-        type: "all",
-        donations
-    }));
-});
+    ws.on("message", async (msg) => {
+        let data;
 
-// Enviar doação nova para o site
-function sendToSite(data) {
-    const json = JSON.stringify(data);
-    wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(json);
+        try { data = JSON.parse(msg); }
+        catch { return; }
+
+        // Website pediu TODAS as doações
+        if (data.type === "request_all") {
+            const donations = await loadDonationsFromDiscord();
+            ws.send(JSON.stringify({
+                type: "all",
+                donations
+            }));
         }
     });
+});
+
+// ---------------------------
+// FUNÇÃO: LER DOAÇÕES DO DISCORD
+// ---------------------------
+async function loadDonationsFromDiscord() {
+    const channel = client.channels.cache.get(DONATION_CHANNEL);
+    if (!channel) return [];
+
+    let messages = [];
+    let lastId;
+
+    while (true) {
+        const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
+        if (fetched.size === 0) break;
+
+        messages = messages.concat(Array.from(fetched.values()));
+        lastId = fetched.last().id;
+    }
+
+    let donations = [];
+
+    for (const msg of messages) {
+        if (!msg.content.startsWith("Doação registada")) continue;
+
+        const regex = /Doação registada(?: \(emergência\))?: \*\*(.+?) → (.+?) \((\d+)\)\*\*/;
+        const match = msg.content.match(regex);
+        if (!match) continue;
+
+        const donator = match[1];
+        const receiver = match[2];
+        const amount = parseInt(match[3]);
+
+        const donatorId = await getUserId(donator);
+        const receiverId = await getUserId(receiver);
+
+        const donatorAvatar = await getAvatar(donatorId);
+        const receiverAvatar = await getAvatar(receiverId);
+
+        donations.push({
+            donator,
+            receiver,
+            amount,
+            donatorAvatar,
+            receiverAvatar
+        });
+    }
+
+    // ordem: mais antigas → mais recentes
+    return donations.reverse();
 }
 
 // ---------------------------
 // ROBLOX API
 // ---------------------------
 async function getUserId(username) {
-    const res = await fetch("https://users.roblox.com/v1/usernames/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usernames: [username] })
-    });
+    try {
+        const res = await fetch("https://users.roblox.com/v1/usernames/users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ usernames: [username] })
+        });
 
-    const data = await res.json();
-    return data.data[0]?.id;
+        const data = await res.json();
+        return data.data[0]?.id;
+    } catch {
+        return null;
+    }
 }
 
 async function getAvatar(userId) {
     if (!userId) return null;
 
-    const res = await fetch(
-        `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`
-    );
+    try {
+        const res = await fetch(
+            `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`
+        );
 
-    const data = await res.json();
-    return data.data[0].imageUrl;
+        const data = await res.json();
+        return data.data[0].imageUrl;
+    } catch {
+        return null;
+    }
 }
 
 // ---------------------------
@@ -86,10 +136,6 @@ const client = new Client({
 // REGISTAR COMANDOS SLASH
 // ---------------------------
 const commands = [
-    new SlashCommandBuilder()
-        .setName("checkonline")
-        .setDescription("Verifica se o bot está online!"),
-
     new SlashCommandBuilder()
         .setName("dono")
         .setDescription("Regista uma doação")
@@ -107,33 +153,8 @@ const commands = [
                 .setRequired(true)),
 
     new SlashCommandBuilder()
-        .setName("deletedono")
-        .setDescription("Apaga uma doação pelo ID da mensagem")
-        .addStringOption(option =>
-            option.setName("id")
-                .setDescription("ID da mensagem do bot")
-                .setRequired(true)),
-
-    new SlashCommandBuilder()
         .setName("deleteall")
-        .setDescription("APAGA TUDO: Discord + Website + Ficheiro + Histórico"),
-
-    new SlashCommandBuilder()
-        .setName("exportdonos")
-        .setDescription("Exporta todas as doações do canal para comandos ?dono"),
-
-    new SlashCommandBuilder()
-        .setName("backupdonations")
-        .setDescription("Faz backup do ficheiro donations.json"),
-
-    new SlashCommandBuilder()
-        .setName("restoredonations")
-        .setDescription("Restaura o histórico de doações a partir de um ficheiro")
-        .addAttachmentOption(option =>
-            option.setName("ficheiro")
-                .setDescription("O ficheiro donations.json para restaurar")
-                .setRequired(true)
-        )
+        .setDescription("Apaga TODAS as mensagens de doação do canal")
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
@@ -157,60 +178,7 @@ client.once("ready", async () => {
 // ---------------------------
 client.on("interactionCreate", async interaction => {
 
-    // BOTÕES DO /deleteall
-    if (interaction.isButton()) {
-
-        if (interaction.customId === "confirm_deleteall") {
-
-            // 1) APAGAR TODAS AS MENSAGENS DO CANAL
-            const channel = interaction.channel;
-
-            let lastId;
-            while (true) {
-                const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
-                if (fetched.size === 0) break;
-
-                lastId = fetched.last().id;
-
-                for (const msg of fetched.values()) {
-                    if (msg.content.startsWith("Doação registada")) {
-                        try { await msg.delete(); } catch (err) {}
-                    }
-                }
-            }
-
-            // 2) APAGAR HISTÓRICO DO WEBSITE
-            donations = [];
-            saveDonations();
-
-            // 3) ENVIAR LISTA VAZIA PARA O SITE
-            sendToSite({
-                type: "all",
-                donations: []
-            });
-
-            return interaction.update({
-                content: "🗑️ Todas as doações foram apagadas do Discord, ficheiro e website!",
-                components: []
-            });
-        }
-
-        if (interaction.customId === "cancel_deleteall") {
-            return interaction.update({
-                content: "❌ Ação cancelada.",
-                components: []
-            });
-        }
-
-        return;
-    }
-
     if (!interaction.isChatInputCommand()) return;
-
-    // /checkonline
-    if (interaction.commandName === "checkonline") {
-        return interaction.reply("I'm online!");
-    }
 
     // /dono
     if (interaction.commandName === "dono") {
@@ -218,249 +186,32 @@ client.on("interactionCreate", async interaction => {
         const receiver = interaction.options.getString("receiver");
         const amount = interaction.options.getInteger("amount");
 
-        const sent = await interaction.reply({
-            content: `Doação registada: **${donator} → ${receiver} (${amount})**`,
-            fetchReply: true
-        });
-
-        const donatorId = await getUserId(donator);
-        const receiverId = await getUserId(receiver);
-
-        const donatorAvatar = await getAvatar(donatorId);
-        const receiverAvatar = await getAvatar(receiverId);
-
-        const donation = {
-            donator,
-            receiver,
-            amount,
-            donatorAvatar,
-            receiverAvatar,
-            messageId: sent.id,
-            timestamp: Date.now()
-        };
-
-        donations.unshift(donation);
-        saveDonations();
-
-        // ⭐ AGORA O SITE ATUALIZA SEMPRE
-        sendToSite({
-            type: "all",
-            donations
-        });
-    }
-
-    // /deletedono
-    if (interaction.commandName === "deletedono") {
-        const messageId = interaction.options.getString("id");
-
-        try {
-            const channel = interaction.channel;
-            const msg = await channel.messages.fetch(messageId);
-            await msg.delete();
-
-            donations = donations.filter(d => d.messageId !== messageId);
-            saveDonations();
-
-            sendToSite({
-                type: "all",
-                donations
-            });
-
-            return interaction.reply({
-                content: `🗑️ Doação apagada com sucesso! (ID: ${messageId})`,
-                ephemeral: true
-            });
-
-        } catch (err) {
-            console.log(err);
-            return interaction.reply({
-                content: "❌ Não encontrei essa mensagem ou não consegui apagar.",
-                ephemeral: true
-            });
-        }
+        await interaction.reply(
+            `Doação registada: **${donator} → ${receiver} (${amount})**`
+        );
     }
 
     // /deleteall
     if (interaction.commandName === "deleteall") {
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId("confirm_deleteall")
-                .setLabel("Sim")
-                .setStyle(ButtonStyle.Danger),
-            new ButtonBuilder()
-                .setCustomId("cancel_deleteall")
-                .setLabel("Não")
-                .setStyle(ButtonStyle.Secondary)
-        );
+        const channel = client.channels.cache.get(DONATION_CHANNEL);
 
-        return interaction.reply({
-            content: "⚠️ Tens a certeza que queres **APAGAR TUDO** (Discord + Website + Ficheiro)?",
-            components: [row],
-            ephemeral: true
-        });
-    }
-
-    // /exportdonos
-    if (interaction.commandName === "exportdonos") {
-
-        await interaction.reply({ content: "📥 A ler mensagens do canal...", ephemeral: true });
-
-        const channel = interaction.channel;
-        let messages = [];
         let lastId;
-
         while (true) {
             const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
             if (fetched.size === 0) break;
 
-            messages = messages.concat(Array.from(fetched.values()));
             lastId = fetched.last().id;
+
+            for (const msg of fetched.values()) {
+                if (msg.content.startsWith("Doação registada")) {
+                    try { await msg.delete(); } catch {}
+                }
+            }
         }
 
-        messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-        let comandos = [];
-
-        for (const msg of messages) {
-            const content = msg.content;
-
-            if (!content.startsWith("Doação registada")) continue;
-
-            const regex = /Doação registada(?: \(emergência\))?: \*\*(.+?) → (.+?) \((\d+)\)\*\*/;
-            const match = content.match(regex);
-
-            if (!match) continue;
-
-            const donator = match[1];
-            const receiver = match[2];
-            const amount = match[3];
-
-            comandos.push(`?dono ${donator} ${receiver} ${amount}`);
-        }
-
-        if (comandos.length === 0) {
-            return interaction.editReply("❌ Não encontrei nenhuma doação no canal.");
-        }
-
-        const fileContent = comandos.join("\n");
-        fs.writeFileSync("exported_donos.txt", fileContent);
-
-        return interaction.followUp({
-            content: `✅ Foram exportadas **${comandos.length}** doações.`,
-            files: ["exported_donos.txt"],
-            ephemeral: true
-        });
+        return interaction.reply("🗑️ Todas as doações foram apagadas do canal!");
     }
-
-    // /backupdonations
-    if (interaction.commandName === "backupdonations") {
-
-        if (!fs.existsSync("donations.json")) {
-            return interaction.reply({
-                content: "❌ Não existe nenhum ficheiro donations.json para fazer backup.",
-                ephemeral: true
-            });
-        }
-
-        return interaction.reply({
-            content: "📦 Aqui está o backup do histórico de doações.",
-            files: ["donations.json"],
-            ephemeral: true
-        });
-    }
-
-    // /restoredonations
-    if (interaction.commandName === "restoredonations") {
-
-        const file = interaction.options.getAttachment("ficheiro");
-
-        if (!file.name.endsWith(".json")) {
-            return interaction.reply({
-                content: "❌ O ficheiro tem de ser um .json válido.",
-                ephemeral: true
-            });
-        }
-
-        await interaction.reply({ content: "📥 A restaurar histórico...", ephemeral: true });
-
-        try {
-            const response = await fetch(file.url);
-            const data = await response.json();
-
-            donations = data;
-            saveDonations();
-
-            sendToSite({
-                type: "all",
-                donations
-            });
-
-            return interaction.followUp({
-                content: "✅ Histórico restaurado com sucesso!",
-                ephemeral: true
-            });
-
-        } catch (err) {
-            console.log(err);
-            return interaction.followUp({
-                content: "❌ Erro ao restaurar o ficheiro. Verifica se é um JSON válido.",
-                ephemeral: true
-            });
-        }
-    }
-});
-
-// ---------------------------
-// COMANDO DE EMERGÊNCIA ?dono
-// ---------------------------
-client.on("messageCreate", async (msg) => {
-    if (!msg.content.startsWith("?dono")) return;
-
-    const lines = msg.content.split("\n");
-
-    for (const line of lines) {
-        if (!line.startsWith("?dono")) continue;
-
-        const parts = line.trim().split(" ");
-
-        if (parts.length < 4) continue;
-
-        const donator = parts[1];
-        const receiver = parts[2];
-        const amount = parseInt(parts[3]);
-
-        const donatorId = await getUserId(donator);
-        const receiverId = await getUserId(receiver);
-
-        const donatorAvatar = await getAvatar(donatorId);
-        const receiverAvatar = await getAvatar(receiverId);
-
-        const sent = await msg.channel.send(
-            `Doação registada (emergência): **${donator} → ${receiver} (${amount})**`
-        );
-
-        const donation = {
-            donator,
-            receiver,
-            amount,
-            donatorAvatar,
-            receiverAvatar,
-            messageId: sent.id,
-            timestamp: Date.now()
-        };
-
-        donations.unshift(donation);
-    }
-
-    saveDonations();
-
-    sendToSite({
-        type: "all",
-        donations
-    });
-
-    msg.reply("✅ Doações de emergência adicionadas com sucesso!");
 });
 
 // ---------------------------
