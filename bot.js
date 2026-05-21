@@ -1,12 +1,9 @@
-// ---------------------------
-// IMPORTS
-// ---------------------------
-const {
-    Client,
-    GatewayIntentBits,
-    REST,
-    Routes,
-    SlashCommandBuilder
+const { 
+    Client, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder 
 } = require("discord.js");
 
 const WebSocket = require("ws");
@@ -14,13 +11,7 @@ const fetch = (...args) => import("node-fetch").then(mod => mod.default(...args)
 const mongoose = require("mongoose");
 
 // ---------------------------
-// CONFIG
-// ---------------------------
-const DONATION_CHANNEL = "1506766663272628385"; // já não é usado para guardar, só para /deleteall
-const PORT = process.env.PORT || 8080;
-
-// ---------------------------
-// MONGODB SCHEMA
+// MONGODB
 // ---------------------------
 const donationSchema = new mongoose.Schema({
     donator: String,
@@ -28,6 +19,7 @@ const donationSchema = new mongoose.Schema({
     amount: Number,
     donatorAvatar: String,
     receiverAvatar: String,
+    messageId: String,
     timestamp: { type: Date, default: Date.now }
 });
 
@@ -36,96 +28,93 @@ const Donation = mongoose.model("Donation", donationSchema);
 // ---------------------------
 // WEBSOCKET SERVER
 // ---------------------------
+const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-wss.on("connection", (ws) => {
-    ws.on("message", async (msg) => {
-        let data;
+// Quando o site se liga ao WebSocket → envia todas as doações
+wss.on("connection", async (ws) => {
+    const donations = await Donation.find().sort({ timestamp: -1 });
+    ws.send(JSON.stringify({
+        type: "all",
+        donations
+    }));
+});
 
-        try { data = JSON.parse(msg); }
-        catch { return; }
-
-        // Website pediu TODAS as doações
-        if (data.type === "request_all") {
-            const donations = await Donation.find().sort({ timestamp: 1 });
-            ws.send(JSON.stringify({
-                type: "all",
-                donations
-            }));
+// Enviar doação nova para o site
+function sendToSite(data) {
+    const json = JSON.stringify(data);
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(json);
         }
     });
-});
+}
 
 // ---------------------------
 // ROBLOX API
 // ---------------------------
 async function getUserId(username) {
-    try {
-        const res = await fetch("https://users.roblox.com/v1/usernames/users", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ usernames: [username] })
-        });
+    const res = await fetch("https://users.roblox.com/v1/usernames/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usernames: [username] })
+    });
 
-        const data = await res.json();
-        return data.data[0]?.id;
-    } catch {
-        return null;
-    }
+    const data = await res.json();
+    return data.data[0]?.id;
 }
 
 async function getAvatar(userId) {
-    if (!userId) return null;
+    const res = await fetch(
+        `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`
+    );
 
-    try {
-        const res = await fetch(
-            `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=420x420&format=Png&isCircular=false`
-        );
-
-        const data = await res.json();
-        return data.data[0].imageUrl;
-    } catch {
-        return null;
-    }
+    const data = await res.json();
+    return data.data[0].imageUrl;
 }
 
 // ---------------------------
 // DISCORD BOT
 // ---------------------------
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+    intents: [GatewayIntentBits.Guilds]
 });
 
 // ---------------------------
-// REGISTAR COMANDOS
+// REGISTAR COMANDOS SLASH
 // ---------------------------
 const commands = [
     new SlashCommandBuilder()
-        .setName("dono")
-        .setDescription("Regista uma doação")
+        .setName('checkonline')
+        .setDescription('Verifica se o bot está online!'),
+
+    new SlashCommandBuilder()
+        .setName('dono')
+        .setDescription('Regista uma doação')
         .addStringOption(option =>
-            option.setName("donator")
-                .setDescription("Nome do doador")
+            option.setName('donator')
+                .setDescription('Nome do doador')
                 .setRequired(true))
         .addStringOption(option =>
-            option.setName("receiver")
-                .setDescription("Nome do recebedor")
+            option.setName('receiver')
+                .setDescription('Nome do recebedor')
                 .setRequired(true))
         .addIntegerOption(option =>
-            option.setName("amount")
-                .setDescription("Valor da doação")
+            option.setName('amount')
+                .setDescription('Valor da doação')
                 .setRequired(true)),
 
     new SlashCommandBuilder()
-        .setName("deleteall")
-        .setDescription("Apaga TODAS as doações do MongoDB")
+        .setName('deletedono')
+        .setDescription('Apaga uma doação pelo ID da mensagem')
+        .addStringOption(option =>
+            option.setName('id')
+                .setDescription('ID da mensagem do bot')
+                .setRequired(true))
 ].map(cmd => cmd.toJSON());
 
-const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
-// ---------------------------
-// READY
-// ---------------------------
 client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
 
@@ -133,10 +122,9 @@ client.once("ready", async () => {
     await mongoose.connect(process.env.MONGO_URL);
     console.log("📦 MongoDB ligado!");
 
-    // REGISTAR COMANDOS
     try {
         await rest.put(
-            Routes.applicationGuildCommands("1506739143517016154", "1505911919645691974"),
+            Routes.applicationGuildCommands("1505911919645691974", "1327452211743293510"),
             { body: commands }
         );
         console.log("Comandos registados!");
@@ -146,11 +134,15 @@ client.once("ready", async () => {
 });
 
 // ---------------------------
-// COMANDOS SLASH
+// COMANDOS
 // ---------------------------
 client.on("interactionCreate", async interaction => {
-
     if (!interaction.isChatInputCommand()) return;
+
+    // /checkonline
+    if (interaction.commandName === "checkonline") {
+        return interaction.reply("I'm online!");
+    }
 
     // /dono
     if (interaction.commandName === "dono") {
@@ -158,29 +150,59 @@ client.on("interactionCreate", async interaction => {
         const receiver = interaction.options.getString("receiver");
         const amount = interaction.options.getInteger("amount");
 
+        const sent = await interaction.reply({
+            content: `Doação registada: **${donator} → ${receiver} (${amount})**`,
+            fetchReply: true
+        });
+
         const donatorId = await getUserId(donator);
         const receiverId = await getUserId(receiver);
 
         const donatorAvatar = await getAvatar(donatorId);
         const receiverAvatar = await getAvatar(receiverId);
 
-        await Donation.create({
+        const donation = await Donation.create({
             donator,
             receiver,
             amount,
             donatorAvatar,
-            receiverAvatar
+            receiverAvatar,
+            messageId: sent.id
         });
 
-        await interaction.reply(
-            `Doação registada: **${donator} → ${receiver} (${amount})**`
-        );
+        sendToSite(donation);
     }
 
-    // /deleteall
-    if (interaction.commandName === "deleteall") {
-        await Donation.deleteMany({});
-        return interaction.reply("🗑️ Todas as doações foram apagadas da base de dados!");
+    // /deletedono
+    if (interaction.commandName === "deletedono") {
+        const messageId = interaction.options.getString("id");
+
+        try {
+            const channel = interaction.channel;
+            const msg = await channel.messages.fetch(messageId);
+            await msg.delete();
+
+            await Donation.deleteOne({ messageId });
+
+            const donations = await Donation.find().sort({ timestamp: -1 });
+
+            sendToSite({
+                type: "all",
+                donations
+            });
+
+            return interaction.reply({
+                content: `🗑️ Doação apagada com sucesso! (ID: ${messageId})`,
+                ephemeral: true
+            });
+
+        } catch (err) {
+            console.log(err);
+            return interaction.reply({
+                content: "❌ Não encontrei essa mensagem ou não consegui apagar.",
+                ephemeral: true
+            });
+        }
     }
 });
 
