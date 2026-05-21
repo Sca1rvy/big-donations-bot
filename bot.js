@@ -1,3 +1,6 @@
+// ---------------------------
+// IMPORTS
+// ---------------------------
 const {
     Client,
     GatewayIntentBits,
@@ -8,16 +11,31 @@ const {
 
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
+const mongoose = require("mongoose");
 
 // ---------------------------
 // CONFIG
 // ---------------------------
-const DONATION_CHANNEL = "1506766663272628385"; // canal das doações
+const DONATION_CHANNEL = "1506766663272628385"; // já não é usado para guardar, só para /deleteall
+const PORT = process.env.PORT || 8080;
+
+// ---------------------------
+// MONGODB SCHEMA
+// ---------------------------
+const donationSchema = new mongoose.Schema({
+    donator: String,
+    receiver: String,
+    amount: Number,
+    donatorAvatar: String,
+    receiverAvatar: String,
+    timestamp: { type: Date, default: Date.now }
+});
+
+const Donation = mongoose.model("Donation", donationSchema);
 
 // ---------------------------
 // WEBSOCKET SERVER
 // ---------------------------
-const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
 wss.on("connection", (ws) => {
@@ -29,7 +47,7 @@ wss.on("connection", (ws) => {
 
         // Website pediu TODAS as doações
         if (data.type === "request_all") {
-            const donations = await loadDonationsFromDiscord();
+            const donations = await Donation.find().sort({ timestamp: 1 });
             ws.send(JSON.stringify({
                 type: "all",
                 donations
@@ -37,55 +55,6 @@ wss.on("connection", (ws) => {
         }
     });
 });
-
-// ---------------------------
-// FUNÇÃO: LER DOAÇÕES DO DISCORD
-// ---------------------------
-async function loadDonationsFromDiscord() {
-    const channel = client.channels.cache.get(DONATION_CHANNEL);
-    if (!channel) return [];
-
-    let messages = [];
-    let lastId;
-
-    while (true) {
-        const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
-        if (fetched.size === 0) break;
-
-        messages = messages.concat(Array.from(fetched.values()));
-        lastId = fetched.last().id;
-    }
-
-    let donations = [];
-
-    for (const msg of messages) {
-        if (!msg.content.startsWith("Doação registada")) continue;
-
-        const regex = /Doação registada(?: \(emergência\))?: \*\*(.+?) → (.+?) \((\d+)\)\*\*/;
-        const match = msg.content.match(regex);
-        if (!match) continue;
-
-        const donator = match[1];
-        const receiver = match[2];
-        const amount = parseInt(match[3]);
-
-        const donatorId = await getUserId(donator);
-        const receiverId = await getUserId(receiver);
-
-        const donatorAvatar = await getAvatar(donatorId);
-        const receiverAvatar = await getAvatar(receiverId);
-
-        donations.push({
-            donator,
-            receiver,
-            amount,
-            donatorAvatar,
-            receiverAvatar
-        });
-    }
-
-    return donations.reverse(); // mais antigas → mais recentes
-}
 
 // ---------------------------
 // ROBLOX API
@@ -128,7 +97,7 @@ const client = new Client({
 });
 
 // ---------------------------
-// REGISTAR COMANDOS SLASH
+// REGISTAR COMANDOS
 // ---------------------------
 const commands = [
     new SlashCommandBuilder()
@@ -149,24 +118,25 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName("deleteall")
-        .setDescription("Apaga TODAS as mensagens de doação do canal")
+        .setDescription("Apaga TODAS as doações do MongoDB")
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
 // ---------------------------
-// READY (APENAS UM BLOCO)
+// READY
 // ---------------------------
 client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
 
-    // LER DOAÇÕES AO INICIAR
-    const initialDonations = await loadDonationsFromDiscord();
-    console.log(`Foram carregadas ${initialDonations.length} doações ao iniciar.`);
+    // LIGAR AO MONGODB
+    await mongoose.connect(process.env.MONGO_URL);
+    console.log("📦 MongoDB ligado!");
 
+    // REGISTAR COMANDOS
     try {
         await rest.put(
-            Routes.applicationGuildCommands("1506739143517016154", "1327452211743293510"),
+            Routes.applicationGuildCommands("1506739143517016154", "1505911919645691974"),
             { body: commands }
         );
         console.log("Comandos registados!");
@@ -188,6 +158,20 @@ client.on("interactionCreate", async interaction => {
         const receiver = interaction.options.getString("receiver");
         const amount = interaction.options.getInteger("amount");
 
+        const donatorId = await getUserId(donator);
+        const receiverId = await getUserId(receiver);
+
+        const donatorAvatar = await getAvatar(donatorId);
+        const receiverAvatar = await getAvatar(receiverId);
+
+        await Donation.create({
+            donator,
+            receiver,
+            amount,
+            donatorAvatar,
+            receiverAvatar
+        });
+
         await interaction.reply(
             `Doação registada: **${donator} → ${receiver} (${amount})**`
         );
@@ -195,24 +179,8 @@ client.on("interactionCreate", async interaction => {
 
     // /deleteall
     if (interaction.commandName === "deleteall") {
-
-        const channel = client.channels.cache.get(DONATION_CHANNEL);
-
-        let lastId;
-        while (true) {
-            const fetched = await channel.messages.fetch({ limit: 100, before: lastId });
-            if (fetched.size === 0) break;
-
-            lastId = fetched.last().id;
-
-            for (const msg of fetched.values()) {
-                if (msg.content.startsWith("Doação registada")) {
-                    try { await msg.delete(); } catch {}
-                }
-            }
-        }
-
-        return interaction.reply("🗑️ Todas as doações foram apagadas do canal!");
+        await Donation.deleteMany({});
+        return interaction.reply("🗑️ Todas as doações foram apagadas da base de dados!");
     }
 });
 
