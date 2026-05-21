@@ -10,7 +10,7 @@ const {
 } = require("discord.js");
 
 const WebSocket = require("ws");
-const fetch = require("node-fetch");
+const fetch = (...args) => import("node-fetch").then(mod => mod.default(...args));
 const mongoose = require("mongoose");
 
 // ---------------------------
