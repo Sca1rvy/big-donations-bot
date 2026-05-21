@@ -10,4 +10,11 @@
     "node-fetch": "^2.6.7",
     "ws": "^8.13.0"
   }
+  {
+  "name": "bot",
+  "version": "1.0.0",
+  "dependencies": {
+    "discord.js": "^14.0.0",
+    "mongoose": "^7.0.0"
+  }
 }
