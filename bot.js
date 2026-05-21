@@ -154,20 +154,32 @@ client.on("messageCreate", async (msg) => {
         return msg.reply("O montante tem de ser um número.");
     }
 
-    const donation = {
+    // 🔥 Buscar IDs reais
+    const donatorId = await getUserId(donator);
+    const receiverId = await getUserId(receiver);
+
+    if (!donatorId || !receiverId) {
+        return msg.reply("❌ Não consegui encontrar um dos utilizadores na Roblox.");
+    }
+
+    // 🔥 Buscar avatares reais
+    const donatorAvatar = await getAvatar(donatorId);
+    const receiverAvatar = await getAvatar(receiverId);
+
+    const donation = await Donation.create({
         donator,
         receiver,
         amount,
-        donatorAvatar: `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${donator}&size=150x150&format=Png&isCircular=true`,
-        receiverAvatar: `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${receiver}&size=150x150&format=Png&isCircular=true`,
+        donatorAvatar,
+        receiverAvatar,
         timestamp: new Date()
-    };
+    });
 
-    await Donation.create(donation);
     sendToSite(donation);
 
     msg.reply(`Doação adicionada: **${donator} → ${receiver} (${amount})**`);
 });
+
 
 // ---------------------------
 // COMANDOS SLASH
