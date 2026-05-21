@@ -138,47 +138,66 @@ client.once("ready", async () => {
 // COMANDO ?DONO (mensagem normal)
 // ---------------------------
 client.on("messageCreate", async (msg) => {
-    if (!msg.content.startsWith("?dono")) return;
+    if (!msg.content.includes("?dono")) return;
 
-    const args = msg.content.split(" ");
+    const lines = msg.content.split("\n");
+    let count = 0;
 
-    if (args.length < 4) {
-        return msg.reply("Formato correto: `?dono Donator Receiver Amount`");
+    for (const line of lines) {
+        if (!line.startsWith("?dono")) continue;
+
+        const args = line.split(" ");
+
+        if (args.length < 4) {
+            msg.reply("Formato correto: `?dono Donator Receiver Amount`");
+            continue;
+        }
+
+        const donator = args[1];
+        const receiver = args[2];
+        const amount = parseInt(args[3]);
+
+        if (isNaN(amount)) {
+            msg.reply(`Montante inválido na linha: ${line}`);
+            continue;
+        }
+
+        // Buscar IDs reais
+        const donatorId = await getUserId(donator);
+        const receiverId = await getUserId(receiver);
+
+        if (!donatorId || !receiverId) {
+            msg.reply(`❌ Não encontrei um dos utilizadores: ${donator} / ${receiver}`);
+            continue;
+        }
+
+        // Buscar avatares reais
+        const donatorAvatar = await getAvatar(donatorId);
+        const receiverAvatar = await getAvatar(receiverId);
+
+        // Criar doação
+        const donation = await Donation.create({
+            donator,
+            receiver,
+            amount,
+            donatorAvatar,
+            receiverAvatar,
+            timestamp: new Date()
+        });
+
+        // Enviar para o site
+        sendToSite(donation);
+
+        count++;
     }
 
-    const donator = args[1];
-    const receiver = args[2];
-    const amount = parseInt(args[3]);
-
-    if (isNaN(amount)) {
-        return msg.reply("O montante tem de ser um número.");
+    if (count > 0) {
+        msg.reply(`✅ ${count} doações adicionadas!`);
+    } else {
+        msg.reply("❌ Nenhuma doação válida encontrada.");
     }
-
-    // 🔥 Buscar IDs reais
-    const donatorId = await getUserId(donator);
-    const receiverId = await getUserId(receiver);
-
-    if (!donatorId || !receiverId) {
-        return msg.reply("❌ Não consegui encontrar um dos utilizadores na Roblox.");
-    }
-
-    // 🔥 Buscar avatares reais
-    const donatorAvatar = await getAvatar(donatorId);
-    const receiverAvatar = await getAvatar(receiverId);
-
-    const donation = await Donation.create({
-        donator,
-        receiver,
-        amount,
-        donatorAvatar,
-        receiverAvatar,
-        timestamp: new Date()
-    });
-
-    sendToSite(donation);
-
-    msg.reply(`Doação adicionada: **${donator} → ${receiver} (${amount})**`);
 });
+
 
 
 // ---------------------------
