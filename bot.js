@@ -119,11 +119,9 @@ client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
 
     // LIGAR AO MONGODB
-    await mongoose.connect(process.env.MONGO_URL, {
-    tls: true,
-    tlsInsecure: false,
-    minVersion: "TLSv1.2"
-});
+await mongoose.connect(process.env.MONGO_URL);
+console.log("📦 MongoDB ligado!");
+
 
     console.log("📦 MongoDB ligado!");
 
