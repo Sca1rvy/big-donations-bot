@@ -1,9 +1,9 @@
-const { 
-    Client, 
-    GatewayIntentBits, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder 
+const {
+    Client,
+    GatewayIntentBits,
+    REST,
+    Routes,
+    SlashCommandBuilder
 } = require("discord.js");
 
 const WebSocket = require("ws");
@@ -31,7 +31,6 @@ const Donation = mongoose.model("Donation", donationSchema);
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-// Quando o site se liga ao WebSocket → envia todas as doações
 wss.on("connection", async (ws) => {
     const donations = await Donation.find().sort({ timestamp: -1 });
     ws.send(JSON.stringify({
@@ -40,7 +39,6 @@ wss.on("connection", async (ws) => {
     }));
 });
 
-// Enviar doação nova para o site
 function sendToSite(data) {
     const json = JSON.stringify(data);
     wss.clients.forEach(client => {
@@ -77,7 +75,11 @@ async function getAvatar(userId) {
 // DISCORD BOT
 // ---------------------------
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
 });
 
 // ---------------------------
@@ -118,11 +120,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
 
-    // LIGAR AO MONGODB
-await mongoose.connect(process.env.MONGO_URL);
-console.log("📦 MongoDB ligado!");
-
-
+    await mongoose.connect(process.env.MONGO_URL);
     console.log("📦 MongoDB ligado!");
 
     try {
@@ -137,7 +135,42 @@ console.log("📦 MongoDB ligado!");
 });
 
 // ---------------------------
-// COMANDOS
+// COMANDO ?DONO (mensagem normal)
+// ---------------------------
+client.on("messageCreate", async (msg) => {
+    if (!msg.content.startsWith("?dono")) return;
+
+    const args = msg.content.split(" ");
+
+    if (args.length < 4) {
+        return msg.reply("Formato correto: `?dono Donator Receiver Amount`");
+    }
+
+    const donator = args[1];
+    const receiver = args[2];
+    const amount = parseInt(args[3]);
+
+    if (isNaN(amount)) {
+        return msg.reply("O montante tem de ser um número.");
+    }
+
+    const donation = {
+        donator,
+        receiver,
+        amount,
+        donatorAvatar: `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${donator}&size=150x150&format=Png&isCircular=true`,
+        receiverAvatar: `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${receiver}&size=150x150&format=Png&isCircular=true`,
+        timestamp: new Date()
+    };
+
+    await Donation.create(donation);
+    sendToSite(donation);
+
+    msg.reply(`Doação adicionada: **${donator} → ${receiver} (${amount})**`);
+});
+
+// ---------------------------
+// COMANDOS SLASH
 // ---------------------------
 client.on("interactionCreate", async interaction => {
     if (!interaction.isChatInputCommand()) return;
