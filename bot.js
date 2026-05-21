@@ -25,6 +25,41 @@ const donationSchema = new mongoose.Schema({
 
 const Donation = mongoose.model("Donation", donationSchema);
 
+async function getTopDonators() {
+    const donations = await Donation.find();
+
+    // Filtrar apenas quem DOOU para Sca1rvy
+    const filtered = donations.filter(d => d.receiver.toLowerCase() === "sca1rvy");
+
+    const totals = {};
+
+    for (const d of filtered) {
+        if (!totals[d.donator]) {
+            totals[d.donator] = {
+                username: d.donator,
+                avatar: d.donatorAvatar,
+                total: 0
+            };
+        }
+        totals[d.donator].total += d.amount;
+    }
+
+    // Converter para array
+    const arr = Object.values(totals);
+
+    // Ordenar por total desc
+    arr.sort((a, b) => b.total - a.total);
+
+    // Top 10 + rank
+    return arr.slice(0, 10).map((d, i) => ({
+        rank: i + 1,
+        username: d.username,
+        avatar: d.avatar,
+        total: d.total
+    }));
+}
+
+
 // ---------------------------
 // WEBSOCKET SERVER
 // ---------------------------
@@ -32,12 +67,36 @@ const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
 wss.on("connection", async (ws) => {
+    const top = await getTopDonators();
+ws.send(JSON.stringify({
+    type: "topDonators",
+    data: top
+}));
+
     const donations = await Donation.find().sort({ timestamp: -1 });
     ws.send(JSON.stringify({
         type: "all",
         donations
     }));
 });
+
+async function sendTopDonators() {
+    const top = await getTopDonators();
+
+    const payload = {
+        type: "topDonators",
+        data: top
+    };
+
+    const json = JSON.stringify(payload);
+
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(json);
+        }
+    });
+}
+
 
 function sendToSite(data) {
     const json = JSON.stringify(data);
@@ -187,6 +246,7 @@ client.on("messageCreate", async (msg) => {
 
         // Enviar para o site
         sendToSite(donation);
+        sendTopDonators();
 
         count++;
     }
@@ -238,6 +298,7 @@ client.on("interactionCreate", async interaction => {
         });
 
         sendToSite(donation);
+        sendTopDonators();
     }
 
     // /deletedono
@@ -257,6 +318,7 @@ client.on("interactionCreate", async interaction => {
                 type: "all",
                 donations
             });
+            sendTopDonators();
 
             return interaction.reply({
                 content: `🗑️ Doação apagada com sucesso! (ID: ${messageId})`,
