@@ -3,10 +3,7 @@ const {
     GatewayIntentBits,
     REST,
     Routes,
-    SlashCommandBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle
+    SlashCommandBuilder
 } = require("discord.js");
 
 const WebSocket = require("ws");
@@ -23,7 +20,6 @@ const DONATION_CHANNEL = "1506766663272628385"; // canal das doações
 const PORT = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port: PORT });
 
-// Quando o site se liga ao WebSocket
 wss.on("connection", (ws) => {
     ws.on("message", async (msg) => {
         let data;
@@ -88,8 +84,7 @@ async function loadDonationsFromDiscord() {
         });
     }
 
-    // ordem: mais antigas → mais recentes
-    return donations.reverse();
+    return donations.reverse(); // mais antigas → mais recentes
 }
 
 // ---------------------------
@@ -159,6 +154,9 @@ const commands = [
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
+// ---------------------------
+// READY (APENAS UM BLOCO)
+// ---------------------------
 client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
 
@@ -178,7 +176,7 @@ client.once("ready", async () => {
 });
 
 // ---------------------------
-// COMANDOS SLASH + BOTÕES
+// COMANDOS SLASH
 // ---------------------------
 client.on("interactionCreate", async interaction => {
 
