@@ -162,6 +162,10 @@ const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 client.once("ready", async () => {
     console.log(`Bot ligado como ${client.user.tag}`);
 
+    // LER DOAÇÕES AO INICIAR
+    const initialDonations = await loadDonationsFromDiscord();
+    console.log(`Foram carregadas ${initialDonations.length} doações ao iniciar.`);
+
     try {
         await rest.put(
             Routes.applicationGuildCommands("1506739143517016154", "1327452211743293510"),
@@ -172,6 +176,7 @@ client.once("ready", async () => {
         console.error(error);
     }
 });
+
 
 // ---------------------------
 // COMANDOS SLASH + BOTÕES
